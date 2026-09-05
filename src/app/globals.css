@@ -1,0 +1,208 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 224 26% 10%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 224 26% 10%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 224 26% 10%;
+
+    --primary: 245 82% 59%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 240 20% 96%;
+    --secondary-foreground: 222 20% 15%;
+
+    --muted: 240 20% 96.5%;
+    --muted-foreground: 220 9% 44%;
+
+    --accent: 243 40% 95%;
+    --accent-foreground: 245 40% 24%;
+
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 100%;
+
+    --success: 152 58% 36%;
+    --success-foreground: 0 0% 100%;
+
+    --warning: 38 92% 48%;
+    --warning-foreground: 24 40% 12%;
+
+    --border: 220 16% 90%;
+    --input: 220 16% 88%;
+    --ring: 245 82% 59%;
+
+    --radius: 0.75rem;
+
+    /* Data-visualization tokens — validated categorical/sequential/status
+       palette (see the dataviz skill). Fixed hue order; never cycled or
+       reassigned by rank. Kept separate from the UI --success/--warning/
+       --destructive tokens above, which drive badges/alerts, not chart marks. */
+    --chart-1: #2a78d6; /* blue      — sequential default */
+    --chart-2: #eb6834; /* orange */
+    --chart-3: #1baf7a; /* aqua */
+    --chart-4: #eda100; /* yellow */
+    --chart-5: #e87ba4; /* magenta */
+    --chart-6: #008300; /* green */
+    --chart-7: #4a3aa7; /* violet    — echoes the brand primary */
+    --chart-8: #e34948; /* red */
+    --chart-good: #0ca30c;
+    --chart-warning: #fab219;
+    --chart-serious: #ec835a;
+    --chart-critical: #d03b3b;
+    --chart-surface: 0 0% 100%;
+  }
+
+  .dark {
+    --background: 226 28% 7%;
+    --foreground: 210 20% 96%;
+
+    --card: 225 26% 9.5%;
+    --card-foreground: 210 20% 96%;
+
+    --popover: 225 26% 9.5%;
+    --popover-foreground: 210 20% 96%;
+
+    --primary: 245 88% 70%;
+    --primary-foreground: 226 40% 8%;
+
+    --secondary: 222 18% 16%;
+    --secondary-foreground: 210 20% 92%;
+
+    --muted: 222 18% 14.5%;
+    --muted-foreground: 220 10% 66%;
+
+    --accent: 243 24% 18%;
+    --accent-foreground: 235 60% 88%;
+
+    --destructive: 0 62% 50%;
+    --destructive-foreground: 0 0% 100%;
+
+    --success: 152 48% 46%;
+    --success-foreground: 0 0% 100%;
+
+    --warning: 38 85% 55%;
+    --warning-foreground: 24 40% 10%;
+
+    --border: 222 16% 18%;
+    --input: 222 16% 20%;
+    --ring: 245 88% 70%;
+
+    --chart-1: #3987e5;
+    --chart-2: #d95926;
+    --chart-3: #199e70;
+    --chart-4: #c98500;
+    --chart-5: #d55181;
+    --chart-6: #008300;
+    --chart-7: #9085e9;
+    --chart-8: #e66767;
+    --chart-good: #0ca30c;
+    --chart-warning: #fab219;
+    --chart-serious: #ec835a;
+    --chart-critical: #d03b3b;
+    --chart-surface: 225 26% 9.5%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  html {
+    color-scheme: light;
+  }
+  html.dark {
+    color-scheme: dark;
+  }
+  body {
+    @apply bg-background text-foreground;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+  }
+  ::selection {
+    background-color: hsl(var(--primary) / 0.22);
+    color: hsl(var(--foreground));
+  }
+  /* A visible, on-brand focus ring for keyboard users everywhere — including
+     elements that don't already opt into focus-visible utilities. */
+  :focus-visible {
+    outline: 2px solid hsl(var(--ring));
+    outline-offset: 2px;
+    border-radius: 2px;
+  }
+}
+
+@layer utilities {
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+  .no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+  .text-balance {
+    text-wrap: balance;
+  }
+  .thin-scrollbar {
+    scrollbar-width: thin;
+    scrollbar-color: hsl(var(--border)) transparent;
+  }
+  .thin-scrollbar::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  .thin-scrollbar::-webkit-scrollbar-thumb {
+    background-color: hsl(var(--border));
+    border-radius: 999px;
+    border: 2px solid transparent;
+    background-clip: content-box;
+  }
+  .thin-scrollbar::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  /* Tabular figures for anything that must align in a column (tables,
+     timestamps, axis ticks). Never used on hero/stat-tile display numbers —
+     those keep proportional figures so they don't look artificially loose. */
+  .tabular {
+    font-variant-numeric: tabular-nums;
+  }
+  /* Premium skeleton: a soft shimmer sweep instead of a flat pulse. */
+  .skeleton-shimmer {
+    background-image: linear-gradient(
+      100deg,
+      hsl(var(--muted)) 40%,
+      hsl(var(--foreground) / 0.06) 50%,
+      hsl(var(--muted)) 60%
+    );
+    background-size: 250% 100%;
+  }
+}
+
+/* Typing indicator dots */
+@keyframes typing-bounce {
+  0%, 60%, 100% { transform: translateY(0); opacity: 0.5; }
+  30% { transform: translateY(-4px); opacity: 1; }
+}
+.typing-dot {
+  animation: typing-bounce 1.2s infinite;
+}
+.typing-dot:nth-child(2) { animation-delay: 0.15s; }
+.typing-dot:nth-child(3) { animation-delay: 0.3s; }
+
+/* Respect reduced-motion preferences: keep entrance/looping animations from
+   causing discomfort, without stripping instant state changes (color, focus). */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}

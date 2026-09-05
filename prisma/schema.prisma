@@ -1,0 +1,409 @@
+// SupportAI — Prisma schema (MongoDB)
+//
+// Notes on running against MongoDB:
+// - Multi-document transactions (used for signup, escalation, and the
+//   document/website ingestion pipeline) require MongoDB to be a replica
+//   set — a plain standalone `mongod` will reject them. A local single-node
+//   replica set or a free MongoDB Atlas cluster both work. See README.md.
+// - Every model uses Mongo's native ObjectId as its primary key, mapped to
+//   the reserved `_id` field. Relation scalar fields are annotated
+//   `@db.ObjectId` so Prisma stores/queries them as real ObjectIds rather
+//   than plain strings.
+// - Embeddings are stored as native `Float[]` arrays (idiomatic for Mongo)
+//   instead of JSON-encoded strings.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mongodb"
+  url      = env("DATABASE_URL")
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Auth / Org
+// ─────────────────────────────────────────────────────────────────────────
+
+model User {
+  id           String   @id @default(auto()) @map("_id") @db.ObjectId
+  name         String
+  email        String   @unique
+  passwordHash String
+  avatarColor  String   @default("#6366f1")
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  memberships           WorkspaceMember[]
+  resetTokens           PasswordResetToken[]
+  assignedTickets       Ticket[]              @relation("TicketAssignee")
+  assignedConversations Conversation[]        @relation("ConversationAssignee")
+  notifications         Notification[]
+  internalNotes         InternalNote[]
+}
+
+model PasswordResetToken {
+  id        String    @id @default(auto()) @map("_id") @db.ObjectId
+  token     String    @unique
+  userId    String    @db.ObjectId
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId])
+}
+
+model Workspace {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  name      String
+  slug      String   @unique
+  plan      String   @default("pro") // starter | pro | scale
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  members         WorkspaceMember[]
+  agents          Agent[]
+  customers       Customer[]
+  documents       Document[]
+  websiteSources  WebsiteSource[]
+  faqs            FAQ[]
+  conversations   Conversation[]
+  tickets         Ticket[]
+  notifications   Notification[]
+  analyticsEvents AnalyticsEvent[]
+}
+
+enum WorkspaceRole {
+  OWNER
+  ADMIN
+  AGENT
+  VIEWER
+}
+
+model WorkspaceMember {
+  id          String        @id @default(auto()) @map("_id") @db.ObjectId
+  workspaceId String        @db.ObjectId
+  workspace   Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  userId      String        @db.ObjectId
+  user        User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role        WorkspaceRole @default(AGENT)
+  invitedAt   DateTime      @default(now())
+  joinedAt    DateTime?
+
+  @@unique([workspaceId, userId])
+  @@index([workspaceId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Agent configuration
+// ─────────────────────────────────────────────────────────────────────────
+
+enum Personality {
+  PROFESSIONAL
+  FRIENDLY
+  CONCISE
+  FORMAL
+  CUSTOM
+}
+
+enum AIProviderKind {
+  MOCK
+  OPENAI
+  ANTHROPIC
+}
+
+model Agent {
+  id          String    @id @default(auto()) @map("_id") @db.ObjectId
+  workspaceId String    @db.ObjectId
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  name        String
+  avatarEmoji String    @default("🤖")
+  brandColor  String    @default("#6366f1")
+
+  personality        Personality    @default(FRIENDLY)
+  systemInstructions String         @default("You are a helpful, honest customer support assistant. Always be polite and never invent information.")
+  provider           AIProviderKind @default(MOCK)
+
+  // Behavior
+  answerOnlyFromKnowledgeBase Boolean @default(true)
+  allowGeneralKnowledge       Boolean @default(false)
+  requireHumanApproval        Boolean @default(false)
+  escalateUncertainQuestions  Boolean @default(true)
+  collectCustomerInfo         Boolean @default(true)
+  askForEmail                 Boolean @default(true)
+  askForPhone                 Boolean @default(false)
+
+  // Human handoff
+  confidenceThreshold Float    @default(0.55)
+  escalationKeywords  String   @default("refund,cancel,legal,angry,speak to a human,manager")
+  businessHoursStart  String   @default("09:00")
+  businessHoursEnd    String   @default("18:00")
+  businessTimezone    String   @default("UTC")
+  escalationMessage   String   @default("I'm connecting you with a member of our support team who can help further.")
+
+  // Widget
+  widgetPosition       String @default("bottom-right")
+  widgetWelcomeMessage String @default("Hi! How can I help you today?")
+  widgetSuggested      String @default("Where is my order?,How do I request a refund?,How can I contact a human?")
+
+  isPublished Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  conversations Conversation[]
+
+  @@index([workspaceId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Knowledge base
+// ─────────────────────────────────────────────────────────────────────────
+
+enum DocumentStatus {
+  PENDING
+  PROCESSING
+  PROCESSED
+  FAILED
+}
+
+enum DocumentType {
+  PDF
+  DOCX
+  TXT
+  CSV
+}
+
+model Document {
+  id           String         @id @default(auto()) @map("_id") @db.ObjectId
+  workspaceId  String         @db.ObjectId
+  workspace    Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  name         String
+  type         DocumentType
+  status       DocumentStatus @default(PENDING)
+  fileSize     Int            @default(0)
+  chunkCount   Int            @default(0)
+  errorMessage String?
+  storagePath  String?
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+
+  chunks DocumentChunk[]
+
+  @@index([workspaceId])
+}
+
+model DocumentChunk {
+  id          String   @id @default(auto()) @map("_id") @db.ObjectId
+  documentId  String   @db.ObjectId
+  document    Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  workspaceId String   @db.ObjectId
+  content     String
+  embedding   Float[] // Native vector array. On Atlas, add an Atlas Vector Search index on this field for ANN search at scale.
+  chunkIndex  Int
+  tokenCount  Int      @default(0)
+  createdAt   DateTime @default(now())
+
+  @@index([documentId])
+  @@index([workspaceId])
+}
+
+enum WebsiteStatus {
+  PENDING
+  CRAWLING
+  PROCESSED
+  FAILED
+}
+
+model WebsiteSource {
+  id            String        @id @default(auto()) @map("_id") @db.ObjectId
+  workspaceId   String        @db.ObjectId
+  workspace     Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  url           String
+  status        WebsiteStatus @default(PENDING)
+  pageCount     Int           @default(0)
+  chunkCount    Int           @default(0)
+  errorMessage  String?
+  lastCrawledAt DateTime?
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  @@index([workspaceId])
+}
+
+model FAQ {
+  id          String    @id @default(auto()) @map("_id") @db.ObjectId
+  workspaceId String    @db.ObjectId
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  question    String
+  answer      String
+  isActive    Boolean   @default(true)
+  embedding   Float[]   @default([])
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([workspaceId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Conversations / Messages
+// ─────────────────────────────────────────────────────────────────────────
+
+model Customer {
+  id          String    @id @default(auto()) @map("_id") @db.ObjectId
+  workspaceId String    @db.ObjectId
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  name        String
+  email       String?
+  phone       String?
+  avatarColor String    @default("#6366f1")
+  createdAt   DateTime  @default(now())
+
+  conversations Conversation[]
+  tickets       Ticket[]
+
+  @@index([workspaceId])
+}
+
+enum ConversationStatus {
+  OPEN
+  AI_HANDLING
+  WAITING
+  HUMAN_REQUIRED
+  RESOLVED
+}
+
+model Conversation {
+  id            String             @id @default(auto()) @map("_id") @db.ObjectId
+  workspaceId   String             @db.ObjectId
+  workspace     Workspace          @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  agentId       String             @db.ObjectId
+  agent         Agent              @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  customerId    String             @db.ObjectId
+  customer      Customer           @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  status        ConversationStatus @default(AI_HANDLING)
+  assigneeId    String?            @db.ObjectId
+  assignee      User?              @relation("ConversationAssignee", fields: [assigneeId], references: [id])
+  channel       String             @default("widget") // widget | demo
+  satisfaction  Int? // 1-5, nullable until customer rates
+  lastMessageAt DateTime           @default(now())
+  createdAt     DateTime           @default(now())
+  updatedAt     DateTime           @updatedAt
+
+  messages      Message[]
+  ticket        Ticket?
+  internalNotes InternalNote[]
+
+  @@index([workspaceId])
+  @@index([agentId])
+  @@index([customerId])
+  @@index([status])
+}
+
+enum MessageRole {
+  CUSTOMER
+  AI
+  HUMAN
+  SYSTEM
+}
+
+model Message {
+  id             String       @id @default(auto()) @map("_id") @db.ObjectId
+  conversationId String       @db.ObjectId
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  role           MessageRole
+  content        String
+  sources        String? // JSON array of { documentName, snippet, score }
+  confidence     Float?
+  feedback       Int? // 1 = up, -1 = down
+  createdAt      DateTime     @default(now())
+
+  @@index([conversationId])
+}
+
+model InternalNote {
+  id             String       @id @default(auto()) @map("_id") @db.ObjectId
+  conversationId String       @db.ObjectId
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  authorId       String       @db.ObjectId
+  author         User         @relation(fields: [authorId], references: [id])
+  content        String
+  createdAt      DateTime     @default(now())
+
+  @@index([conversationId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Tickets
+// ─────────────────────────────────────────────────────────────────────────
+
+enum TicketPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+enum TicketStatus {
+  OPEN
+  IN_PROGRESS
+  WAITING
+  RESOLVED
+  CLOSED
+}
+
+model Ticket {
+  id             String         @id @default(auto()) @map("_id") @db.ObjectId
+  workspaceId    String         @db.ObjectId
+  workspace      Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  number         Int
+  subject        String
+  priority       TicketPriority @default(MEDIUM)
+  status         TicketStatus   @default(OPEN)
+  customerId     String         @db.ObjectId
+  customer       Customer       @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  assigneeId     String?        @db.ObjectId
+  assignee       User?          @relation("TicketAssignee", fields: [assigneeId], references: [id])
+  conversationId String?        @unique @db.ObjectId
+  conversation   Conversation?  @relation(fields: [conversationId], references: [id])
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  @@index([workspaceId])
+  @@index([status])
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Notifications / Analytics
+// ─────────────────────────────────────────────────────────────────────────
+
+model Notification {
+  id          String    @id @default(auto()) @map("_id") @db.ObjectId
+  workspaceId String    @db.ObjectId
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  userId      String?   @db.ObjectId
+  user        User?     @relation(fields: [userId], references: [id])
+  type        String // escalation | ticket | mention | system
+  title       String
+  body        String
+  read        Boolean   @default(false)
+  href        String?
+  createdAt   DateTime  @default(now())
+
+  @@index([workspaceId])
+  @@index([userId])
+}
+
+model AnalyticsEvent {
+  id          String    @id @default(auto()) @map("_id") @db.ObjectId
+  workspaceId String    @db.ObjectId
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  type        String // conversation_started | ai_resolved | human_resolved | escalated | csat | message_sent
+  value       Float     @default(1)
+  metadata    String? // JSON
+  createdAt   DateTime  @default(now())
+
+  @@index([workspaceId])
+  @@index([type])
+  @@index([createdAt])
+}
