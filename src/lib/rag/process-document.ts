@@ -1,6 +1,6 @@
 import "server-only";
 import { prisma } from "@/lib/db/prisma";
-import { getAIProvider } from "@/lib/ai";
+import { embedMany } from "@/lib/ai/embeddings";
 import { cleanText, extractText } from "./extract";
 import { chunkText } from "./chunk";
 import { encodeEmbedding } from "./vector-search";
@@ -31,8 +31,11 @@ export async function processDocument(documentId: string, buffer: Buffer, type: 
       throw new Error("Document produced no usable chunks after cleaning.");
     }
 
-    const provider = await getAIProvider("mock"); // ingestion always uses the fast local embedder
-    const embeddings = await provider.embedBatch(chunks.map((c) => c.content));
+    // Real Voyage AI embeddings when VOYAGE_API_KEY is set, otherwise the
+    // local hash embedder — see embeddings.ts. A failure here throws (not
+    // caught until the outer try/catch below) so the document is correctly
+    // marked FAILED rather than silently mixing embedding spaces.
+    const embeddings = await embedMany(chunks.map((c) => c.content), "document");
 
     await prisma.$transaction([
       prisma.documentChunk.deleteMany({ where: { documentId } }),
@@ -81,8 +84,7 @@ export async function processWebsite(sourceId: string) {
     }
 
     const chunks = chunkText(pageText);
-    const provider = await getAIProvider("mock");
-    const embeddings = await provider.embedBatch(chunks.map((c) => c.content));
+    const embeddings = await embedMany(chunks.map((c) => c.content), "document");
     const documentId = await ensureWebsiteDocumentId(source.id, source.workspaceId, source.url);
 
     await prisma.$transaction([

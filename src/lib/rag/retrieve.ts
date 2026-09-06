@@ -1,6 +1,7 @@
 import "server-only";
 import { prisma } from "@/lib/db/prisma";
-import { getAIProvider } from "@/lib/ai";
+import { embedOne } from "@/lib/ai/embeddings";
+import { hashEmbedding } from "@/lib/ai/mock-provider";
 import { parseEmbedding, topKByCosineSimilarity } from "./vector-search";
 
 export interface RetrievedSource {
@@ -18,8 +19,15 @@ const MIN_SCORE = 0.12; // below this, treat as "no relevant context"
  * matches plus a best-effort confidence score.
  */
 export async function retrieveContext(workspaceId: string, question: string) {
-  const provider = await getAIProvider("mock");
-  const queryVector = await provider.embed(question);
+  // Unlike ingestion, a failed query embedding must not 500 the customer's
+  // live chat request — fall back to the local hash embedder for this one
+  // query rather than throwing. (It'll score badly against
+  // Voyage-embedded chunks since they're different vector spaces, but that
+  // just means a low-confidence/no-match result, not a broken chat.)
+  const queryVector = await embedOne(question, "query").catch((err) => {
+    console.error("Query embedding failed, falling back to local hash embedder:", err);
+    return hashEmbedding(question);
+  });
 
   const [chunks, faqs] = await Promise.all([
     prisma.documentChunk.findMany({

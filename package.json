@@ -13,6 +13,7 @@
     "db:generate": "prisma generate",
     "db:studio": "prisma studio",
     "db:seed": "tsx scripts/seed.ts",
+    "db:reembed": "tsx scripts/reembed.ts",
     "postinstall": "prisma generate"
   },
   "dependencies": {

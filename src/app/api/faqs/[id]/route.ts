@@ -3,7 +3,7 @@ import { prisma } from "@/lib/db/prisma";
 import { requireWorkspaceContext, canWrite } from "@/lib/api/guard";
 import { apiSuccess, apiError, handleApiError } from "@/lib/api/response";
 import { faqSchema } from "@/lib/validation/schemas";
-import { getAIProvider } from "@/lib/ai";
+import { embedOne } from "@/lib/ai/embeddings";
 import { encodeEmbedding } from "@/lib/rag/vector-search";
 import { z } from "zod";
 
@@ -26,8 +26,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 
     let embedding = existing.embedding;
     if (body.question || body.answer) {
-      const provider = await getAIProvider("mock");
-      const vec = await provider.embed(`Q: ${body.question ?? existing.question}\nA: ${body.answer ?? existing.answer}`);
+      const vec = await embedOne(`Q: ${body.question ?? existing.question}\nA: ${body.answer ?? existing.answer}`, "document");
       embedding = encodeEmbedding(vec);
     }
 

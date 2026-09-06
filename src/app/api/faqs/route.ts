@@ -3,7 +3,7 @@ import { prisma } from "@/lib/db/prisma";
 import { requireWorkspaceContext, canWrite } from "@/lib/api/guard";
 import { apiSuccess, apiError, handleApiError } from "@/lib/api/response";
 import { faqSchema } from "@/lib/validation/schemas";
-import { getAIProvider } from "@/lib/ai";
+import { embedOne } from "@/lib/ai/embeddings";
 import { encodeEmbedding } from "@/lib/rag/vector-search";
 
 export async function GET() {
@@ -20,8 +20,7 @@ export async function POST(req: NextRequest) {
     if (!canWrite(ctx.role)) return apiError("You don't have permission to add FAQs.", 403);
 
     const body = faqSchema.parse(await req.json());
-    const provider = await getAIProvider("mock");
-    const embedding = await provider.embed(`Q: ${body.question}\nA: ${body.answer}`);
+    const embedding = await embedOne(`Q: ${body.question}\nA: ${body.answer}`, "document");
 
     const faq = await prisma.fAQ.create({
       data: { workspaceId: ctx.workspace.id, question: body.question, answer: body.answer, embedding: encodeEmbedding(embedding) },
