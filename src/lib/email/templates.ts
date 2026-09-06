@@ -20,21 +20,20 @@ function button(url: string, label: string): string {
   return `<a href="${url}" style="display: inline-block; margin: 20px 0; padding: 10px 20px; background: #6366f1; color: #ffffff; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 14px;">${label}</a>`;
 }
 
-export function inviteEmailHtml(opts: { inviterName: string; workspaceName: string; role: string; actionUrl: string; isNewAccount: boolean }): string {
+export function inviteEmailHtml(opts: { inviterName: string; workspaceName: string; role: string; actionUrl: string }): string {
   const roleLabel = ROLE_LABEL[opts.role] ?? opts.role;
-  const body = opts.isNewAccount
-    ? `<p style="font-size: 14px; line-height: 1.6; color: #3f3f46;">
-        ${escapeHtml(opts.inviterName)} added you to <strong>${escapeHtml(opts.workspaceName)}</strong> on SupportAI as
-        <strong>${roleLabel}</strong>. Set a password to activate your account and get started.
-      </p>
-      ${button(opts.actionUrl, "Set your password")}
-      <p style="font-size: 12px; color: #71717a; word-break: break-all;">Or paste this link into your browser: ${opts.actionUrl}</p>
-      <p style="font-size: 12px; color: #71717a;">This link expires in 1 hour.</p>`
-    : `<p style="font-size: 14px; line-height: 1.6; color: #3f3f46;">
-        ${escapeHtml(opts.inviterName)} added you to <strong>${escapeHtml(opts.workspaceName)}</strong> on SupportAI as
-        <strong>${roleLabel}</strong>. Log in with your existing account to get started.
-      </p>
-      ${button(opts.actionUrl, "Log in")}`;
+  // Always a "set your password" link — even for someone who already has a
+  // SupportAI account elsewhere, this is just a normal password reset
+  // (their existing password keeps working until they actually use this
+  // link). One consistent action, no ambiguity about whether to log in or
+  // set a password.
+  const body = `<p style="font-size: 14px; line-height: 1.6; color: #3f3f46;">
+      ${escapeHtml(opts.inviterName)} added you to <strong>${escapeHtml(opts.workspaceName)}</strong> on SupportAI as
+      <strong>${roleLabel}</strong>. Set a password to get started.
+    </p>
+    ${button(opts.actionUrl, "Set your password")}
+    <p style="font-size: 12px; color: #71717a; word-break: break-all;">Or paste this link into your browser: ${opts.actionUrl}</p>
+    <p style="font-size: 12px; color: #71717a;">This link expires in 1 hour.</p>`;
 
   return layout(`<h1 style="font-size: 18px; margin: 0 0 12px;">You've been invited to ${escapeHtml(opts.workspaceName)}</h1>${body}`);
 }

@@ -29,7 +29,6 @@ export async function POST(req: NextRequest) {
     const email = body.email.toLowerCase();
 
     let user = await prisma.user.findUnique({ where: { email } });
-    const isNewUser = !user;
     if (!user) {
       // Placeholder account, random unusable password — activated below via
       // the same password-reset token flow used for "forgot password".
@@ -47,28 +46,21 @@ export async function POST(req: NextRequest) {
       include: { user: { select: { id: true, name: true, email: true, avatarColor: true } } },
     });
 
-    // New accounts need a way to set a real password before they can log in
-    // at all; existing users already have working credentials, so they just
-    // get a heads-up rather than another claim link.
-    if (isNewUser) {
-      const token = crypto.randomBytes(32).toString("hex");
-      await prisma.passwordResetToken.create({
-        data: { userId: user.id, token, expiresAt: new Date(Date.now() + 60 * 60 * 1000) },
-      });
-      const actionUrl = `${process.env.APP_URL}/reset-password?token=${token}&welcome=1`;
-      await sendEmail({
-        to: user.email,
-        subject: `You've been invited to ${ctx.workspace.name} on SupportAI`,
-        html: inviteEmailHtml({ inviterName: ctx.user.name, workspaceName: ctx.workspace.name, role: body.role, actionUrl, isNewAccount: true }),
-      }).catch((err) => console.error("Failed to send invite email:", err));
-    } else {
-      const actionUrl = `${process.env.APP_URL}/login`;
-      await sendEmail({
-        to: user.email,
-        subject: `You've been added to ${ctx.workspace.name} on SupportAI`,
-        html: inviteEmailHtml({ inviterName: ctx.user.name, workspaceName: ctx.workspace.name, role: body.role, actionUrl, isNewAccount: false }),
-      }).catch((err) => console.error("Failed to send invite notification email:", err));
-    }
+    // Every invite email links straight to the set-password page — for a
+    // brand-new placeholder account that's the only way in at all; for an
+    // existing user it's just a normal password reset (safe to trigger
+    // any time, doesn't touch their current session). One link, one flow,
+    // no "log in with whatever password you might remember" ambiguity.
+    const token = crypto.randomBytes(32).toString("hex");
+    await prisma.passwordResetToken.create({
+      data: { userId: user.id, token, expiresAt: new Date(Date.now() + 60 * 60 * 1000) },
+    });
+    const actionUrl = `${process.env.APP_URL}/reset-password?token=${token}&welcome=1`;
+    await sendEmail({
+      to: user.email,
+      subject: `You've been invited to ${ctx.workspace.name} on SupportAI`,
+      html: inviteEmailHtml({ inviterName: ctx.user.name, workspaceName: ctx.workspace.name, role: body.role, actionUrl }),
+    }).catch((err) => console.error("Failed to send invite email:", err));
 
     return apiSuccess(member, 201);
   } catch (err) {
