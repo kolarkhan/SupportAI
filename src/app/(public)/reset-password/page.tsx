@@ -14,6 +14,7 @@ function ResetPasswordForm() {
   const router = useRouter();
   const params = useSearchParams();
   const token = params.get("token") || "";
+  const isWelcome = params.get("welcome") === "1";
   const [loading, setLoading] = useState(false);
   const [done, setDone] = useState(false);
   const [form, setForm] = useState({ password: "", confirmPassword: "" });
@@ -37,7 +38,7 @@ function ResetPasswordForm() {
         return;
       }
       setDone(true);
-      toast.success("Password updated — you can log in now.");
+      toast.success(isWelcome ? "You're all set — you can log in now." : "Password updated — you can log in now.");
     } catch {
       toast.error("Network error — please try again.");
     } finally {
@@ -65,8 +66,8 @@ function ResetPasswordForm() {
 
   return (
     <AuthShell
-      title="Set a new password"
-      subtitle="Choose a new password for your account."
+      title={isWelcome ? "Welcome to SupportAI" : "Set a new password"}
+      subtitle={isWelcome ? "Set a password to activate your account and get started." : "Choose a new password for your account."}
       footer={
         <Link href="/login" className="font-medium text-foreground hover:underline">
           Back to login
@@ -76,7 +77,7 @@ function ResetPasswordForm() {
       {done ? (
         <div className="rounded-lg border border-border bg-muted/40 p-4 text-center">
           <CheckCircle2 className="mx-auto h-6 w-6 text-success" />
-          <p className="mt-2 text-sm font-medium">Password updated</p>
+          <p className="mt-2 text-sm font-medium">{isWelcome ? "Account activated" : "Password updated"}</p>
           <p className="mt-1 text-xs text-muted-foreground">You can now log in with your new password.</p>
           <Button className="mt-4 w-full" onClick={() => router.push("/login")}>
             Go to login
