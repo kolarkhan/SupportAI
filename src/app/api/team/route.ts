@@ -55,14 +55,14 @@ export async function POST(req: NextRequest) {
       await prisma.passwordResetToken.create({
         data: { userId: user.id, token, expiresAt: new Date(Date.now() + 60 * 60 * 1000) },
       });
-      const actionUrl = `${process.env.NEXT_PUBLIC_APP_URL}/reset-password?token=${token}&welcome=1`;
+      const actionUrl = `${process.env.APP_URL}/reset-password?token=${token}&welcome=1`;
       await sendEmail({
         to: user.email,
         subject: `You've been invited to ${ctx.workspace.name} on SupportAI`,
         html: inviteEmailHtml({ inviterName: ctx.user.name, workspaceName: ctx.workspace.name, role: body.role, actionUrl, isNewAccount: true }),
       }).catch((err) => console.error("Failed to send invite email:", err));
     } else {
-      const actionUrl = `${process.env.NEXT_PUBLIC_APP_URL}/login`;
+      const actionUrl = `${process.env.APP_URL}/login`;
       await sendEmail({
         to: user.email,
         subject: `You've been added to ${ctx.workspace.name} on SupportAI`,

@@ -31,7 +31,7 @@ export async function POST(req: NextRequest) {
       await prisma.passwordResetToken.create({
         data: { userId: user.id, token, expiresAt: new Date(Date.now() + 60 * 60 * 1000) },
       });
-      const actionUrl = `${process.env.NEXT_PUBLIC_APP_URL}/reset-password?token=${token}`;
+      const actionUrl = `${process.env.APP_URL}/reset-password?token=${token}`;
       await sendEmail({
         to: user.email,
         subject: "Reset your SupportAI password",
