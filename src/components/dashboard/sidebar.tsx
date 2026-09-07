@@ -6,7 +6,7 @@ import { usePathname } from "next/navigation";
 import { AnimatePresence, motion } from "framer-motion";
 import { toast } from "sonner";
 import {
-  LayoutDashboard, MessageSquare, BookOpen, Bot, Ticket, BarChart3, Users,
+  LayoutDashboard, MessageSquare, Bot, Ticket, BarChart3, Users,
   Settings, HelpCircle, X, LogOut, ChevronsUpDown,
 } from "lucide-react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -24,7 +24,6 @@ interface SidebarUser {
 const primaryNav = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/dashboard/conversations", label: "Conversations", icon: MessageSquare },
-  { href: "/dashboard/knowledge", label: "Knowledge Base", icon: BookOpen },
   { href: "/dashboard/agent", label: "AI Agent", icon: Bot },
   { href: "/dashboard/tickets", label: "Tickets", icon: Ticket },
   { href: "/dashboard/analytics", label: "Analytics", icon: BarChart3 },

@@ -62,7 +62,7 @@ export default async function DashboardOverviewPage() {
               <p className="mt-1 text-sm text-muted-foreground">Upload documents or connect your website so {agent?.name || "your agent"} can start answering questions.</p>
             </div>
             <Button asChild>
-              <Link href="/dashboard/knowledge">
+              <Link href="/dashboard/agent?tab=knowledge">
                 Add Knowledge <ArrowRight className="h-4 w-4" />
               </Link>
             </Button>

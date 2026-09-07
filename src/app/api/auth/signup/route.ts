@@ -47,7 +47,7 @@ export async function POST(req: NextRequest) {
           type: "system",
           title: "Welcome to SupportAI",
           body: "Your workspace is ready. Upload documents or add a website to start training your AI agent.",
-          href: "/dashboard/knowledge",
+          href: "/dashboard/agent?tab=knowledge",
         },
       });
       return { user, workspace, agent };

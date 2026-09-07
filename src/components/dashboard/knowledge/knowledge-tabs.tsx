@@ -1,22 +1,17 @@
 "use client";
 
-import { useRouter } from "next/navigation";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { DocumentsPanel } from "./documents-panel";
 import { WebsitesPanel } from "./websites-panel";
 import { FAQsPanel } from "./faqs-panel";
 
-const ROUTES: Record<string, string> = {
-  documents: "/dashboard/knowledge/documents",
-  websites: "/dashboard/knowledge/websites",
-  faqs: "/dashboard/knowledge/faqs",
-};
-
+// Local tab state rather than route-per-tab — this now lives nested inside
+// the AI Agent page (see agent-builder.tsx) rather than as its own
+// standalone /dashboard/knowledge destination, so switching sub-tabs must
+// stay on the current page instead of navigating away from it.
 export function KnowledgeTabs({ initialTab }: { initialTab: "documents" | "websites" | "faqs" }) {
-  const router = useRouter();
-
   return (
-    <Tabs value={initialTab} onValueChange={(v) => router.push(ROUTES[v])}>
+    <Tabs defaultValue={initialTab}>
       <TabsList>
         <TabsTrigger value="documents">Documents</TabsTrigger>
         <TabsTrigger value="websites">Websites</TabsTrigger>

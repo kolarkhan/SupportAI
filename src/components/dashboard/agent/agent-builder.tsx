@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { toast } from "sonner";
 import { Loader2, Save } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -16,6 +17,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
+import { KnowledgeTabs } from "@/components/dashboard/knowledge/knowledge-tabs";
 
 interface AgentData {
   id: string;
@@ -52,6 +54,8 @@ const PERSONALITIES = [
 ];
 
 export function AgentBuilder() {
+  const searchParams = useSearchParams();
+  const initialTab = searchParams.get("tab") === "knowledge" ? "knowledge" : "general";
   const [agent, setAgent] = useState<AgentData | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(false);
@@ -123,9 +127,10 @@ export function AgentBuilder() {
         </Button>
       </div>
 
-      <Tabs defaultValue="general">
+      <Tabs defaultValue={initialTab}>
         <TabsList className="flex-wrap">
           <TabsTrigger value="general">General</TabsTrigger>
+          <TabsTrigger value="knowledge">Knowledge Base</TabsTrigger>
           <TabsTrigger value="behavior">Behavior</TabsTrigger>
           <TabsTrigger value="handoff">Human Handoff</TabsTrigger>
           <TabsTrigger value="widget">Widget</TabsTrigger>
@@ -179,6 +184,14 @@ export function AgentBuilder() {
               </div>
             </CardContent>
           </Card>
+        </TabsContent>
+
+        <TabsContent value="knowledge">
+          <div className="space-y-1.5 pb-4">
+            <p className="text-sm font-medium">Knowledge base</p>
+            <p className="text-xs text-muted-foreground">Upload documents, connect websites, and write FAQs to train this agent.</p>
+          </div>
+          <KnowledgeTabs initialTab="documents" />
         </TabsContent>
 
         <TabsContent value="behavior">
