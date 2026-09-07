@@ -5,6 +5,7 @@ import { apiSuccess, apiError, handleApiError } from "@/lib/api/response";
 import { faqSchema } from "@/lib/validation/schemas";
 import { embedOne } from "@/lib/ai/embeddings";
 import { encodeEmbedding } from "@/lib/rag/vector-search";
+import { isPineconeConfigured, upsertVectors, deleteVectors } from "@/lib/rag/pinecone";
 import { z } from "zod";
 
 async function getOwnedFaq(workspaceId: string, id: string) {
@@ -31,6 +32,25 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     }
 
     const faq = await prisma.fAQ.update({ where: { id }, data: { ...body, embedding } });
+
+    if (isPineconeConfigured()) {
+      try {
+        // Inactive FAQs are removed from the index entirely rather than
+        // just left there — Pinecone has no per-record "isActive" filter
+        // here, so "not searchable" has to mean "not in the index".
+        if (faq.isActive) {
+          await upsertVectors(ctx.workspace.id, [{ id: faq.id, values: embedding, content: `Q: ${faq.question}\nA: ${faq.answer}`, documentName: "FAQ" }]);
+        } else {
+          await deleteVectors(ctx.workspace.id, [faq.id]);
+        }
+      } catch (err) {
+        // Roll back to the pre-edit state so Mongo and Pinecone don't drift
+        // apart, and the user sees the edit actually failed.
+        await prisma.fAQ.update({ where: { id }, data: { question: existing.question, answer: existing.answer, isActive: existing.isActive, embedding: existing.embedding } }).catch(() => {});
+        throw err;
+      }
+    }
+
     return apiSuccess(faq);
   } catch (err) {
     return handleApiError(err);
@@ -48,6 +68,9 @@ export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ 
     if (!existing) return apiError("FAQ not found", 404);
 
     await prisma.fAQ.delete({ where: { id } });
+    if (isPineconeConfigured()) {
+      await deleteVectors(ctx.workspace.id, [id]).catch((err) => console.error("Failed to remove FAQ vector from Pinecone:", err));
+    }
     return apiSuccess({ deleted: true });
   } catch (err) {
     return handleApiError(err);

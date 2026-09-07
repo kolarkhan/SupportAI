@@ -5,6 +5,7 @@ import { apiSuccess, apiError, handleApiError } from "@/lib/api/response";
 import { faqSchema } from "@/lib/validation/schemas";
 import { embedOne } from "@/lib/ai/embeddings";
 import { encodeEmbedding } from "@/lib/rag/vector-search";
+import { isPineconeConfigured, upsertVectors } from "@/lib/rag/pinecone";
 
 export async function GET() {
   const { ctx, response } = await requireWorkspaceContext();
@@ -25,6 +26,20 @@ export async function POST(req: NextRequest) {
     const faq = await prisma.fAQ.create({
       data: { workspaceId: ctx.workspace.id, question: body.question, answer: body.answer, embedding: encodeEmbedding(embedding) },
     });
+
+    if (isPineconeConfigured()) {
+      try {
+        await upsertVectors(ctx.workspace.id, [{ id: faq.id, values: embedding, content: `Q: ${faq.question}\nA: ${faq.answer}`, documentName: "FAQ" }]);
+      } catch (err) {
+        // Roll back the Mongo row rather than leave a FAQ that exists but is
+        // silently unsearchable — this is an interactive save, so the user
+        // should see it failed and just retry, not end up with a half-saved
+        // FAQ nobody can find via chat.
+        await prisma.fAQ.delete({ where: { id: faq.id } }).catch(() => {});
+        throw err;
+      }
+    }
+
     return apiSuccess(faq, 201);
   } catch (err) {
     return handleApiError(err);

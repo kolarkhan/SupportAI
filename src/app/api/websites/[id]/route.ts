@@ -3,6 +3,7 @@ import { prisma } from "@/lib/db/prisma";
 import { requireWorkspaceContext, canWrite } from "@/lib/api/guard";
 import { apiSuccess, apiError, handleApiError } from "@/lib/api/response";
 import { processWebsite } from "@/lib/rag/process-document";
+import { isPineconeConfigured, deleteVectors } from "@/lib/rag/pinecone";
 
 export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
@@ -15,8 +16,16 @@ export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ 
     if (!source) return apiError("Website source not found", 404);
 
     const marker = `website:${source.id}`;
+    const chunkIds = isPineconeConfigured()
+      ? (await prisma.documentChunk.findMany({ where: { workspaceId: ctx.workspace.id, document: { storagePath: marker } }, select: { id: true } })).map((c) => c.id)
+      : [];
+
     await prisma.document.deleteMany({ where: { workspaceId: ctx.workspace.id, storagePath: marker } });
     await prisma.websiteSource.delete({ where: { id } });
+
+    if (chunkIds.length > 0) {
+      await deleteVectors(ctx.workspace.id, chunkIds).catch((err) => console.error("Failed to remove website vectors from Pinecone:", err));
+    }
 
     return apiSuccess({ deleted: true });
   } catch (err) {

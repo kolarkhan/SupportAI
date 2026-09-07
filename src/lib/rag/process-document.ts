@@ -4,13 +4,20 @@ import { embedMany } from "@/lib/ai/embeddings";
 import { cleanText, extractText } from "./extract";
 import { chunkText } from "./chunk";
 import { encodeEmbedding } from "./vector-search";
-import type { DocumentType } from "@prisma/client";
+import { isPineconeConfigured, upsertVectors, deleteVectors } from "./pinecone";
+import type { DocumentChunk, DocumentType } from "@prisma/client";
 
 /**
  * Full ingestion pipeline (spec steps 1-8):
  * validate -> extract -> clean -> chunk -> embed -> store -> mark processed.
  * Runs async/best-effort; failures are recorded on the Document row so the
  * UI can show "Failed" with a retry action instead of hanging forever.
+ *
+ * Chunks are always written to Mongo (source of truth, and the fallback
+ * search path when Pinecone isn't configured). When PINECONE_API_KEY is
+ * set, they're also upserted into Pinecone — a failure there fails the
+ * whole document (falls through to the catch below) rather than leaving it
+ * marked PROCESSED with no actual vectors to search against.
  */
 export async function processDocument(documentId: string, buffer: Buffer, type: DocumentType) {
   const doc = await prisma.document.findUnique({ where: { id: documentId } });
@@ -37,7 +44,9 @@ export async function processDocument(documentId: string, buffer: Buffer, type: 
     // marked FAILED rather than silently mixing embedding spaces.
     const embeddings = await embedMany(chunks.map((c) => c.content), "document");
 
-    await prisma.$transaction([
+    const oldChunkIds = (await prisma.documentChunk.findMany({ where: { documentId }, select: { id: true } })).map((c) => c.id);
+
+    const results = await prisma.$transaction([
       prisma.documentChunk.deleteMany({ where: { documentId } }),
       ...chunks.map((chunk, i) =>
         prisma.documentChunk.create({
@@ -56,6 +65,15 @@ export async function processDocument(documentId: string, buffer: Buffer, type: 
         data: { status: "PROCESSED", chunkCount: chunks.length, errorMessage: null },
       }),
     ]);
+    const createdChunks = results.slice(1, 1 + chunks.length) as unknown as DocumentChunk[];
+
+    if (isPineconeConfigured()) {
+      if (oldChunkIds.length > 0) await deleteVectors(doc.workspaceId, oldChunkIds);
+      await upsertVectors(
+        doc.workspaceId,
+        createdChunks.map((c, i) => ({ id: c.id, values: embeddings[i], content: c.content, documentName: doc.name }))
+      );
+    }
   } catch (err: any) {
     await prisma.document.update({
       where: { id: documentId },
@@ -85,9 +103,9 @@ export async function processWebsite(sourceId: string) {
 
     const chunks = chunkText(pageText);
     const embeddings = await embedMany(chunks.map((c) => c.content), "document");
-    const documentId = await ensureWebsiteDocumentId(source.id, source.workspaceId, source.url);
+    const { documentId, oldChunkIds } = await ensureWebsiteDocumentId(source.id, source.workspaceId, source.url);
 
-    await prisma.$transaction([
+    const results = await prisma.$transaction([
       ...chunks.map((chunk, i) =>
         prisma.documentChunk.create({
           data: {
@@ -111,6 +129,17 @@ export async function processWebsite(sourceId: string) {
         },
       }),
     ]);
+    const createdChunks = results.slice(0, chunks.length) as unknown as DocumentChunk[];
+
+    if (isPineconeConfigured()) {
+      // Recrawling regenerates chunks with brand-new ids each time, so the
+      // previous crawl's vectors would otherwise linger as orphans forever.
+      if (oldChunkIds.length > 0) await deleteVectors(source.workspaceId, oldChunkIds);
+      await upsertVectors(
+        source.workspaceId,
+        createdChunks.map((c, i) => ({ id: c.id, values: embeddings[i], content: c.content, documentName: source.url }))
+      );
+    }
   } catch (err: any) {
     await prisma.websiteSource.update({
       where: { id: sourceId },
@@ -121,12 +150,17 @@ export async function processWebsite(sourceId: string) {
 
 // Website content is stored as chunks tied to a synthetic Document row so it
 // shares the same retrieval path as uploaded files.
-async function ensureWebsiteDocumentId(sourceId: string, workspaceId: string, url: string): Promise<string> {
+async function ensureWebsiteDocumentId(
+  sourceId: string,
+  workspaceId: string,
+  url: string
+): Promise<{ documentId: string; oldChunkIds: string[] }> {
   const marker = `website:${sourceId}`;
   const existing = await prisma.document.findFirst({ where: { workspaceId, storagePath: marker } });
   if (existing) {
+    const oldChunkIds = (await prisma.documentChunk.findMany({ where: { documentId: existing.id }, select: { id: true } })).map((c) => c.id);
     await prisma.documentChunk.deleteMany({ where: { documentId: existing.id } });
-    return existing.id;
+    return { documentId: existing.id, oldChunkIds };
   }
   const created = await prisma.document.create({
     data: {
@@ -137,7 +171,7 @@ async function ensureWebsiteDocumentId(sourceId: string, workspaceId: string, ur
       storagePath: marker,
     },
   });
-  return created.id;
+  return { documentId: created.id, oldChunkIds: [] };
 }
 
 function stripHtml(html: string): string {
