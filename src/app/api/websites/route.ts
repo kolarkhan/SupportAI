@@ -4,6 +4,7 @@ import { requireWorkspaceContext, canWrite } from "@/lib/api/guard";
 import { apiSuccess, apiError, handleApiError } from "@/lib/api/response";
 import { websiteSchema } from "@/lib/validation/schemas";
 import { processWebsite } from "@/lib/rag/process-document";
+import { isPineconeConfigured } from "@/lib/rag/pinecone";
 
 export async function GET() {
   const { ctx, response } = await requireWorkspaceContext();
@@ -12,7 +13,7 @@ export async function GET() {
     where: { workspaceId: ctx.workspace.id },
     orderBy: { createdAt: "desc" },
   });
-  return apiSuccess(sources);
+  return apiSuccess({ items: sources, vectorStore: isPineconeConfigured() ? "pinecone" : "mongodb" });
 }
 
 export async function POST(req: NextRequest) {

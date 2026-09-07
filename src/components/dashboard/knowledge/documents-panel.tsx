@@ -9,6 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/shared/empty-state";
 import { ErrorState } from "@/components/shared/error-state";
+import { IndeterminateBar } from "@/components/shared/indeterminate-bar";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from "@/components/ui/dialog";
@@ -25,15 +26,33 @@ interface DocumentItem {
   createdAt: string;
 }
 
-const STATUS_META: Record<string, { label: string; icon: React.ReactNode; className: string }> = {
-  PENDING: { label: "Queued", icon: <Clock className="h-3 w-3" />, className: "text-muted-foreground border-border" },
-  PROCESSING: { label: "Processing…", icon: <Loader2 className="h-3 w-3 animate-spin" />, className: "text-primary border-primary/30 bg-primary/5" },
-  PROCESSED: { label: "Processed", icon: <CheckCircle2 className="h-3 w-3" />, className: "text-success border-success/30 bg-success/5" },
-  FAILED: { label: "Failed", icon: <XCircle className="h-3 w-3" />, className: "text-destructive border-destructive/30 bg-destructive/5" },
-};
+type VectorStore = "pinecone" | "mongodb";
+
+// PROCESSING/PROCESSED wording depends on which vector store is actually
+// active — never claim "indexed in Pinecone" when the fallback in-app
+// search is what's really serving this workspace's queries.
+function getStatusMeta(status: DocumentItem["status"], vectorStore: VectorStore) {
+  const indexedIn = vectorStore === "pinecone" ? "Pinecone" : "knowledge base";
+  const meta: Record<DocumentItem["status"], { label: string; icon: React.ReactNode; className: string }> = {
+    PENDING: { label: "Queued", icon: <Clock className="h-3 w-3" />, className: "text-muted-foreground border-border" },
+    PROCESSING: {
+      label: `Indexing in ${indexedIn}…`,
+      icon: <Loader2 className="h-3 w-3 animate-spin" />,
+      className: "text-primary border-primary/30 bg-primary/5",
+    },
+    PROCESSED: {
+      label: vectorStore === "pinecone" ? "Indexed in Pinecone" : "Processed",
+      icon: <CheckCircle2 className="h-3 w-3" />,
+      className: "text-success border-success/30 bg-success/5",
+    },
+    FAILED: { label: "Failed", icon: <XCircle className="h-3 w-3" />, className: "text-destructive border-destructive/30 bg-destructive/5" },
+  };
+  return meta[status];
+}
 
 export function DocumentsPanel() {
   const [items, setItems] = useState<DocumentItem[] | null>(null);
+  const [vectorStore, setVectorStore] = useState<VectorStore>("mongodb");
   const [error, setError] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<DocumentItem | null>(null);
@@ -45,7 +64,8 @@ export function DocumentsPanel() {
       .then((r) => r.json())
       .then((json) => {
         if (!json.ok) throw new Error();
-        setItems(json.data);
+        setItems(json.data.items);
+        setVectorStore(json.data.vectorStore);
       })
       .catch(() => setError(true));
   }, []);
@@ -142,37 +162,41 @@ export function DocumentsPanel() {
       ) : (
         <div className="space-y-2.5">
           {items.map((doc) => {
-            const meta = STATUS_META[doc.status];
+            const meta = getStatusMeta(doc.status, vectorStore);
+            const isLoading = doc.status === "PENDING" || doc.status === "PROCESSING";
             return (
-              <Card key={doc.id} className="flex items-center justify-between gap-3 p-4">
-                <div className="flex min-w-0 items-center gap-3">
-                  <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
-                    <FileText className="h-4.5 w-4.5" />
-                  </span>
-                  <div className="min-w-0">
-                    <p className="truncate text-sm font-medium">{doc.name}</p>
-                    <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground">
-                      <span>{doc.type}</span>
-                      <span>·</span>
-                      <span>{formatRelativeTime(doc.createdAt)}</span>
-                      {doc.status === "PROCESSED" && (
-                        <>
-                          <span>·</span>
-                          <span>{doc.chunkCount} chunks</span>
-                        </>
-                      )}
+              <Card key={doc.id} className="flex flex-col gap-1 p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex min-w-0 items-center gap-3">
+                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
+                      <FileText className="h-4.5 w-4.5" />
+                    </span>
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-medium">{doc.name}</p>
+                      <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground">
+                        <span>{doc.type}</span>
+                        <span>·</span>
+                        <span>{formatRelativeTime(doc.createdAt)}</span>
+                        {doc.status === "PROCESSED" && (
+                          <>
+                            <span>·</span>
+                            <span>{doc.chunkCount} chunks</span>
+                          </>
+                        )}
+                      </div>
+                      {doc.status === "FAILED" && doc.errorMessage && <p className="mt-1 text-xs text-destructive">{doc.errorMessage}</p>}
                     </div>
-                    {doc.status === "FAILED" && doc.errorMessage && <p className="mt-1 text-xs text-destructive">{doc.errorMessage}</p>}
+                  </div>
+                  <div className="flex shrink-0 items-center gap-2">
+                    <Badge variant="outline" className={meta.className}>
+                      {meta.icon} {meta.label}
+                    </Badge>
+                    <Button variant="ghost" size="icon" onClick={() => setDeleteTarget(doc)} aria-label="Delete document">
+                      <Trash2 className="h-4 w-4 text-muted-foreground" />
+                    </Button>
                   </div>
                 </div>
-                <div className="flex shrink-0 items-center gap-2">
-                  <Badge variant="outline" className={meta.className}>
-                    {meta.icon} {meta.label}
-                  </Badge>
-                  <Button variant="ghost" size="icon" onClick={() => setDeleteTarget(doc)} aria-label="Delete document">
-                    <Trash2 className="h-4 w-4 text-muted-foreground" />
-                  </Button>
-                </div>
+                {isLoading && <IndeterminateBar />}
               </Card>
             );
           })}

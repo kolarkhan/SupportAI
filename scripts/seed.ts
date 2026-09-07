@@ -257,7 +257,7 @@ async function main() {
 
   for (const doc of DOCS) {
     const document = await prisma.document.create({
-      data: { workspaceId: workspace.id, name: doc.name, type: doc.name.endsWith(".docx") ? "DOCX" : doc.name.endsWith(".txt") ? "TXT" : "PDF", status: "PROCESSED", fileSize: doc.content.length * 3 },
+      data: { workspaceId: workspace.id, name: doc.name, type: doc.name.endsWith(".docx") ? "DOCX" : doc.name.endsWith(".txt") ? "TXT" : "PDF", status: "PROCESSED", fileSize: doc.content.length * 3, storagePath: null },
     });
     const chunks = chunkText(doc.content);
     await prisma.documentChunk.createMany({
@@ -274,7 +274,7 @@ async function main() {
   }
   // One document still "processing" so the UI demonstrates that state.
   await prisma.document.create({
-    data: { workspaceId: workspace.id, name: "Enterprise Security Whitepaper.pdf", type: "PDF", status: "PROCESSING", fileSize: 420_000 },
+    data: { workspaceId: workspace.id, name: "Enterprise Security Whitepaper.pdf", type: "PDF", status: "PROCESSING", fileSize: 420_000, storagePath: null },
   });
 
   await prisma.websiteSource.createMany({

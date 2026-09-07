@@ -196,6 +196,17 @@
 .typing-dot:nth-child(2) { animation-delay: 0.15s; }
 .typing-dot:nth-child(3) { animation-delay: 0.3s; }
 
+/* Indeterminate progress bar — document/website ingestion while queued or
+   actively being chunked, embedded, and indexed. */
+@keyframes indeterminate-bar {
+  0% { transform: translateX(-100%); }
+  60% { transform: translateX(140%); }
+  100% { transform: translateX(140%); }
+}
+.indeterminate-bar-fill {
+  animation: indeterminate-bar 1.4s ease-in-out infinite;
+}
+
 /* Respect reduced-motion preferences: keep entrance/looping animations from
    causing discomfort, without stripping instant state changes (color, focus). */
 @media (prefers-reduced-motion: reduce) {
