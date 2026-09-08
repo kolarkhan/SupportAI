@@ -14,7 +14,7 @@ export class AnthropicProvider implements AIProvider {
 
   constructor() {
     this.apiKey = process.env.ANTHROPIC_API_KEY || "";
-    this.model = process.env.ANTHROPIC_CHAT_MODEL || "claude-3-5-sonnet-latest";
+    this.model = process.env.ANTHROPIC_CHAT_MODEL || "claude-sonnet-5";
   }
 
   private async getClient() {
@@ -38,7 +38,9 @@ export class AnthropicProvider implements AIProvider {
       system,
       messages: rest,
       max_tokens: req.maxTokens ?? 600,
-      temperature: req.temperature ?? 0.4,
+      // `temperature` is deprecated/rejected outright by the current Claude
+      // model family (400 invalid_request_error) — omit it rather than pin
+      // a value the API no longer accepts.
     });
     const block = res.content[0];
     return block?.type === "text" ? block.text : "";
@@ -52,7 +54,6 @@ export class AnthropicProvider implements AIProvider {
       system,
       messages: rest,
       max_tokens: req.maxTokens ?? 600,
-      temperature: req.temperature ?? 0.4,
     });
     for await (const event of stream) {
       if (event.type === "content_block_delta" && event.delta.type === "text_delta") {

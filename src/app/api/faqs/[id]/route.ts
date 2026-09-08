@@ -4,7 +4,6 @@ import { requireWorkspaceContext, canWrite } from "@/lib/api/guard";
 import { apiSuccess, apiError, handleApiError } from "@/lib/api/response";
 import { faqSchema } from "@/lib/validation/schemas";
 import { embedOne } from "@/lib/ai/embeddings";
-import { encodeEmbedding } from "@/lib/rag/vector-search";
 import { isPineconeConfigured, upsertVectors, deleteVectors } from "@/lib/rag/pinecone";
 import { z } from "zod";
 
@@ -17,6 +16,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     const { ctx, response } = await requireWorkspaceContext();
     if (!ctx) return response;
     if (!canWrite(ctx.role)) return apiError("You don't have permission to edit FAQs.", 403);
+    if (!isPineconeConfigured()) return apiError("Pinecone is not configured — set PINECONE_API_KEY to enable FAQs.", 500);
 
     const { id } = await params;
     const existing = await getOwnedFaq(ctx.workspace.id, id);
@@ -25,30 +25,26 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     const schema = faqSchema.partial().extend({ isActive: z.boolean().optional() });
     const body = schema.parse(await req.json());
 
-    let embedding = existing.embedding;
-    if (body.question || body.answer) {
-      const vec = await embedOne(`Q: ${body.question ?? existing.question}\nA: ${body.answer ?? existing.answer}`, "document");
-      embedding = encodeEmbedding(vec);
-    }
+    const faq = await prisma.fAQ.update({ where: { id }, data: body });
 
-    const faq = await prisma.fAQ.update({ where: { id }, data: { ...body, embedding } });
-
-    if (isPineconeConfigured()) {
-      try {
-        // Inactive FAQs are removed from the index entirely rather than
-        // just left there — Pinecone has no per-record "isActive" filter
-        // here, so "not searchable" has to mean "not in the index".
-        if (faq.isActive) {
-          await upsertVectors(ctx.workspace.id, [{ id: faq.id, values: embedding, content: `Q: ${faq.question}\nA: ${faq.answer}`, documentName: "FAQ" }]);
-        } else {
-          await deleteVectors(ctx.workspace.id, [faq.id]);
-        }
-      } catch (err) {
-        // Roll back to the pre-edit state so Mongo and Pinecone don't drift
-        // apart, and the user sees the edit actually failed.
-        await prisma.fAQ.update({ where: { id }, data: { question: existing.question, answer: existing.answer, isActive: existing.isActive, embedding: existing.embedding } }).catch(() => {});
-        throw err;
+    try {
+      // Inactive FAQs are removed from the index entirely rather than just
+      // left there — Pinecone has no per-record "isActive" filter here, so
+      // "not searchable" has to mean "not in the index". Mongo no longer
+      // has a cached embedding to reuse, so re-embed whenever the FAQ ends
+      // up active — cheap (one short string) and always correct, including
+      // when only `isActive` flips back to true with no content change.
+      if (faq.isActive) {
+        const vec = await embedOne(`Q: ${faq.question}\nA: ${faq.answer}`, "document");
+        await upsertVectors(ctx.workspace.id, [{ id: faq.id, values: vec, content: `Q: ${faq.question}\nA: ${faq.answer}`, documentName: "FAQ" }]);
+      } else {
+        await deleteVectors(ctx.workspace.id, [faq.id]);
       }
+    } catch (err) {
+      // Roll back to the pre-edit state so the user sees the edit actually
+      // failed, rather than a FAQ that looks saved but isn't searchable.
+      await prisma.fAQ.update({ where: { id }, data: { question: existing.question, answer: existing.answer, isActive: existing.isActive } }).catch(() => {});
+      throw err;
     }
 
     return apiSuccess(faq);

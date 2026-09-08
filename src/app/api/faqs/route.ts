@@ -4,7 +4,6 @@ import { requireWorkspaceContext, canWrite } from "@/lib/api/guard";
 import { apiSuccess, apiError, handleApiError } from "@/lib/api/response";
 import { faqSchema } from "@/lib/validation/schemas";
 import { embedOne } from "@/lib/ai/embeddings";
-import { encodeEmbedding } from "@/lib/rag/vector-search";
 import { isPineconeConfigured, upsertVectors } from "@/lib/rag/pinecone";
 
 export async function GET() {
@@ -20,24 +19,24 @@ export async function POST(req: NextRequest) {
     if (!ctx) return response;
     if (!canWrite(ctx.role)) return apiError("You don't have permission to add FAQs.", 403);
 
+    if (!isPineconeConfigured()) return apiError("Pinecone is not configured — set PINECONE_API_KEY to enable FAQs.", 500);
+
     const body = faqSchema.parse(await req.json());
     const embedding = await embedOne(`Q: ${body.question}\nA: ${body.answer}`, "document");
 
     const faq = await prisma.fAQ.create({
-      data: { workspaceId: ctx.workspace.id, question: body.question, answer: body.answer, embedding: encodeEmbedding(embedding) },
+      data: { workspaceId: ctx.workspace.id, question: body.question, answer: body.answer },
     });
 
-    if (isPineconeConfigured()) {
-      try {
-        await upsertVectors(ctx.workspace.id, [{ id: faq.id, values: embedding, content: `Q: ${faq.question}\nA: ${faq.answer}`, documentName: "FAQ" }]);
-      } catch (err) {
-        // Roll back the Mongo row rather than leave a FAQ that exists but is
-        // silently unsearchable — this is an interactive save, so the user
-        // should see it failed and just retry, not end up with a half-saved
-        // FAQ nobody can find via chat.
-        await prisma.fAQ.delete({ where: { id: faq.id } }).catch(() => {});
-        throw err;
-      }
+    try {
+      await upsertVectors(ctx.workspace.id, [{ id: faq.id, values: embedding, content: `Q: ${faq.question}\nA: ${faq.answer}`, documentName: "FAQ" }]);
+    } catch (err) {
+      // Roll back the Mongo row rather than leave a FAQ that exists but is
+      // silently unsearchable — this is an interactive save, so the user
+      // should see it failed and just retry, not end up with a half-saved
+      // FAQ nobody can find via chat.
+      await prisma.fAQ.delete({ where: { id: faq.id } }).catch(() => {});
+      throw err;
     }
 
     return apiSuccess(faq, 201);

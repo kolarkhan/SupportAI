@@ -3,7 +3,6 @@ import { prisma } from "@/lib/db/prisma";
 import { embedMany } from "@/lib/ai/embeddings";
 import { cleanText, extractText } from "./extract";
 import { chunkText } from "./chunk";
-import { encodeEmbedding } from "./vector-search";
 import { isPineconeConfigured, upsertVectors, deleteVectors } from "./pinecone";
 import type { DocumentChunk, DocumentType } from "@prisma/client";
 
@@ -13,17 +12,22 @@ import type { DocumentChunk, DocumentType } from "@prisma/client";
  * Runs async/best-effort; failures are recorded on the Document row so the
  * UI can show "Failed" with a retry action instead of hanging forever.
  *
- * Chunks are always written to Mongo (source of truth, and the fallback
- * search path when Pinecone isn't configured). When PINECONE_API_KEY is
- * set, they're also upserted into Pinecone — a failure there fails the
- * whole document (falls through to the catch below) rather than leaving it
- * marked PROCESSED with no actual vectors to search against.
+ * Chunk *text* is written to Mongo (source of truth for content); the
+ * *vectors* go to Pinecone exclusively — Mongo has no embedding field.
+ * Pinecone is therefore required for ingestion to succeed at all: if it
+ * isn't configured, or the upsert fails, the whole document is marked
+ * FAILED with a clear message rather than ending up PROCESSED with no
+ * actual vectors to search against.
  */
 export async function processDocument(documentId: string, buffer: Buffer, type: DocumentType) {
   const doc = await prisma.document.findUnique({ where: { id: documentId } });
   if (!doc) return;
 
   try {
+    if (!isPineconeConfigured()) {
+      throw new Error("Pinecone is not configured — set PINECONE_API_KEY to enable document indexing.");
+    }
+
     await prisma.document.update({ where: { id: documentId }, data: { status: "PROCESSING" } });
 
     const rawText = await extractText(buffer, type);
@@ -48,13 +52,12 @@ export async function processDocument(documentId: string, buffer: Buffer, type: 
 
     const results = await prisma.$transaction([
       prisma.documentChunk.deleteMany({ where: { documentId } }),
-      ...chunks.map((chunk, i) =>
+      ...chunks.map((chunk) =>
         prisma.documentChunk.create({
           data: {
             documentId,
             workspaceId: doc.workspaceId,
             content: chunk.content,
-            embedding: encodeEmbedding(embeddings[i]),
             chunkIndex: chunk.index,
             tokenCount: chunk.tokenCount,
           },
@@ -67,13 +70,11 @@ export async function processDocument(documentId: string, buffer: Buffer, type: 
     ]);
     const createdChunks = results.slice(1, 1 + chunks.length) as unknown as DocumentChunk[];
 
-    if (isPineconeConfigured()) {
-      if (oldChunkIds.length > 0) await deleteVectors(doc.workspaceId, oldChunkIds);
-      await upsertVectors(
-        doc.workspaceId,
-        createdChunks.map((c, i) => ({ id: c.id, values: embeddings[i], content: c.content, documentName: doc.name }))
-      );
-    }
+    if (oldChunkIds.length > 0) await deleteVectors(doc.workspaceId, oldChunkIds);
+    await upsertVectors(
+      doc.workspaceId,
+      createdChunks.map((c, i) => ({ id: c.id, values: embeddings[i], content: c.content, documentName: doc.name }))
+    );
   } catch (err: any) {
     await prisma.document.update({
       where: { id: documentId },
@@ -88,6 +89,10 @@ export async function processWebsite(sourceId: string) {
   if (!source) return;
 
   try {
+    if (!isPineconeConfigured()) {
+      throw new Error("Pinecone is not configured — set PINECONE_API_KEY to enable website indexing.");
+    }
+
     await prisma.websiteSource.update({ where: { id: sourceId }, data: { status: "CRAWLING" } });
 
     let pageText: string;
@@ -106,13 +111,12 @@ export async function processWebsite(sourceId: string) {
     const { documentId, oldChunkIds } = await ensureWebsiteDocumentId(source.id, source.workspaceId, source.url);
 
     const results = await prisma.$transaction([
-      ...chunks.map((chunk, i) =>
+      ...chunks.map((chunk) =>
         prisma.documentChunk.create({
           data: {
             documentId,
             workspaceId: source.workspaceId,
             content: chunk.content,
-            embedding: encodeEmbedding(embeddings[i]),
             chunkIndex: chunk.index,
             tokenCount: chunk.tokenCount,
           },
@@ -131,15 +135,13 @@ export async function processWebsite(sourceId: string) {
     ]);
     const createdChunks = results.slice(0, chunks.length) as unknown as DocumentChunk[];
 
-    if (isPineconeConfigured()) {
-      // Recrawling regenerates chunks with brand-new ids each time, so the
-      // previous crawl's vectors would otherwise linger as orphans forever.
-      if (oldChunkIds.length > 0) await deleteVectors(source.workspaceId, oldChunkIds);
-      await upsertVectors(
-        source.workspaceId,
-        createdChunks.map((c, i) => ({ id: c.id, values: embeddings[i], content: c.content, documentName: source.url }))
-      );
-    }
+    // Recrawling regenerates chunks with brand-new ids each time, so the
+    // previous crawl's vectors would otherwise linger as orphans forever.
+    if (oldChunkIds.length > 0) await deleteVectors(source.workspaceId, oldChunkIds);
+    await upsertVectors(
+      source.workspaceId,
+      createdChunks.map((c, i) => ({ id: c.id, values: embeddings[i], content: c.content, documentName: source.url }))
+    );
   } catch (err: any) {
     await prisma.websiteSource.update({
       where: { id: sourceId },

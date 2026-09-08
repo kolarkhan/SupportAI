@@ -13,14 +13,12 @@
  * Why this exists: switching embedding providers (or models) changes the
  * vector space entirely. Cosine similarity between a vector from the old
  * provider and one from the new provider is meaningless — worse, since
- * different models can produce different dimensionalities,
- * `cosineSimilarity`'s length-truncation would silently compare a slice of
- * one vector against a slice of the other rather than erroring, producing
- * bogus scores instead of an obvious failure. Anything embedded before a
- * provider switch needs to be re-embedded so a workspace's vectors are all
- * in the same space again — in Mongo (the fallback search path) AND in
- * Pinecone (if configured — otherwise Pinecone would keep serving stale
- * vectors from before the switch while Mongo has fresh ones).
+ * different models can produce different dimensionalities, comparing them
+ * directly would silently compare mismatched vectors instead of erroring,
+ * producing bogus scores rather than an obvious failure. Anything embedded
+ * before a provider switch needs to be re-embedded so a workspace's vectors
+ * are all in the same space again in Pinecone — the only place vectors live;
+ * Mongo holds chunk/FAQ text only, never embeddings.
  *
  * Usage:
  *   npx tsx scripts/reembed.ts              # re-embed everything
@@ -77,11 +75,13 @@ async function embedBatch(texts: string[]): Promise<number[][]> {
 }
 
 // ── Local Pinecone client (mirrors src/lib/rag/pinecone.ts) ────────────────
-let pineconeClient: Pinecone | null = null;
-function getPinecone(): Pinecone | null {
-  if (!process.env.PINECONE_API_KEY) return null;
-  if (!pineconeClient) pineconeClient = new Pinecone({ apiKey: process.env.PINECONE_API_KEY });
-  return pineconeClient;
+// Pinecone is the only vector store now, so this script requires it — there
+// is nothing left to re-embed into if it isn't configured.
+function getPinecone(): Pinecone {
+  if (!process.env.PINECONE_API_KEY) {
+    throw new Error("PINECONE_API_KEY is not set — Pinecone is required to re-embed (it's the only vector store).");
+  }
+  return new Pinecone({ apiKey: process.env.PINECONE_API_KEY });
 }
 
 let indexReady: Promise<void> | null = null;
@@ -113,9 +113,8 @@ async function ensureIndex(pc: Pinecone, dimension: number): Promise<void> {
 /** Upserts one batch's worth of records, grouped by workspace since each
  * workspace is its own Pinecone namespace and a single Mongo batch can span
  * several workspaces when re-embedding everything at once. */
-async function upsertToPinecone(records: { id: string; workspaceId: string; values: number[]; content: string; documentName: string }[]) {
-  const pc = getPinecone();
-  if (!pc || records.length === 0) return;
+async function upsertToPinecone(pc: Pinecone, records: { id: string; workspaceId: string; values: number[]; content: string; documentName: string }[]) {
+  if (records.length === 0) return;
   await ensureIndex(pc, records[0].values.length);
 
   const byWorkspace = new Map<string, typeof records>();
@@ -137,7 +136,7 @@ function chunkArray<T>(arr: T[], size: number): T[][] {
   return out;
 }
 
-async function reembedChunks(workspaceId?: string) {
+async function reembedChunks(pc: Pinecone, workspaceId?: string) {
   const chunks = await prisma.documentChunk.findMany({
     where: workspaceId ? { workspaceId } : undefined,
     select: { id: true, content: true, workspaceId: true, document: { select: { name: true } } },
@@ -149,15 +148,15 @@ async function reembedChunks(workspaceId?: string) {
   console.log(`Re-embedding ${chunks.length} document chunk(s)...`);
   for (const batch of chunkArray(chunks, BATCH_SIZE)) {
     const vectors = await embedBatch(batch.map((c) => c.content));
-    await prisma.$transaction(batch.map((c, i) => prisma.documentChunk.update({ where: { id: c.id }, data: { embedding: vectors[i] } })));
     await upsertToPinecone(
+      pc,
       batch.map((c, i) => ({ id: c.id, workspaceId: c.workspaceId, values: vectors[i], content: c.content, documentName: c.document.name }))
     );
     console.log(`  ...${batch.length} done`);
   }
 }
 
-async function reembedFaqs(workspaceId?: string) {
+async function reembedFaqs(pc: Pinecone, workspaceId?: string) {
   const faqs = await prisma.fAQ.findMany({
     where: workspaceId ? { workspaceId, isActive: true } : { isActive: true },
     select: { id: true, question: true, answer: true, workspaceId: true },
@@ -170,8 +169,8 @@ async function reembedFaqs(workspaceId?: string) {
   for (const batch of chunkArray(faqs, BATCH_SIZE)) {
     const contents = batch.map((f) => `Q: ${f.question}\nA: ${f.answer}`);
     const vectors = await embedBatch(contents);
-    await prisma.$transaction(batch.map((f, i) => prisma.fAQ.update({ where: { id: f.id }, data: { embedding: vectors[i] } })));
     await upsertToPinecone(
+      pc,
       batch.map((f, i) => ({ id: f.id, workspaceId: f.workspaceId, values: vectors[i], content: contents[i], documentName: "FAQ" }))
     );
     console.log(`  ...${batch.length} done`);
@@ -181,13 +180,13 @@ async function reembedFaqs(workspaceId?: string) {
 async function main() {
   const workspaceId = process.argv[2];
   const usingVoyage = !!process.env.VOYAGE_API_KEY;
-  const usingPinecone = !!process.env.PINECONE_API_KEY;
   console.log(`Embedding backend: ${usingVoyage ? `Voyage AI (${process.env.VOYAGE_EMBEDDING_MODEL || "voyage-3.5"})` : "local hash embedder"}`);
-  console.log(`Vector store: ${usingPinecone ? `Pinecone (${PINECONE_INDEX})` : "MongoDB (brute-force search)"}`);
+  console.log(`Vector store: Pinecone (${PINECONE_INDEX})`);
   if (workspaceId) console.log(`Scope: workspace ${workspaceId}`);
 
-  await reembedChunks(workspaceId);
-  await reembedFaqs(workspaceId);
+  const pc = getPinecone();
+  await reembedChunks(pc, workspaceId);
+  await reembedFaqs(pc, workspaceId);
 
   console.log("✅ Re-embed complete.");
 }

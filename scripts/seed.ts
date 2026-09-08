@@ -1,13 +1,18 @@
 /* eslint-disable no-console */
 import { PrismaClient } from "@prisma/client";
+import { Pinecone } from "@pinecone-database/pinecone";
 import bcrypt from "bcryptjs";
 
 const prisma = new PrismaClient();
 
-// ── Local copies of chunking / embedding so this script has zero dependency
-// on "server-only"-guarded app code and can run standalone via tsx. ────────
+// ── Local copies of chunking / embedding / Pinecone so this script has zero
+// dependency on "server-only"-guarded app code and can run standalone via
+// tsx (mirrors scripts/reembed.ts). Vectors live in Pinecone exclusively —
+// Mongo's DocumentChunk/FAQ rows hold text only, so seeded demo content is
+// only searchable via chat once it's also pushed to Pinecone below. ───────
 
 const EMBEDDING_DIMENSIONS = 384;
+const PINECONE_INDEX = process.env.PINECONE_INDEX || "supportai";
 
 function hashEmbedding(text: string, dims = EMBEDDING_DIMENSIONS): number[] {
   const vec = new Array(dims).fill(0);
@@ -28,6 +33,60 @@ function hashString(str: string): number {
   }
   return Math.abs(hash);
 }
+
+async function voyageEmbedBatch(texts: string[], apiKey: string, model: string): Promise<number[][]> {
+  const res = await fetch("https://api.voyageai.com/v1/embeddings", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+    body: JSON.stringify({ input: texts, model, input_type: "document" }),
+  });
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(`Voyage AI embedding request failed (${res.status}): ${body.slice(0, 300) || res.statusText}`);
+  }
+  const json = (await res.json()) as { data: { embedding: number[]; index: number }[] };
+  return [...json.data].sort((a, b) => a.index - b.index).map((d) => d.embedding);
+}
+async function embedBatch(texts: string[]): Promise<number[][]> {
+  const apiKey = process.env.VOYAGE_API_KEY;
+  if (apiKey) return voyageEmbedBatch(texts, apiKey, process.env.VOYAGE_EMBEDDING_MODEL || "voyage-3.5");
+  return texts.map((t) => hashEmbedding(t));
+}
+
+const pinecone = process.env.PINECONE_API_KEY ? new Pinecone({ apiKey: process.env.PINECONE_API_KEY }) : null;
+let indexReady: Promise<void> | null = null;
+async function ensureIndex(dimension: number): Promise<void> {
+  if (!pinecone) return;
+  if (!indexReady) {
+    indexReady = (async () => {
+      const existing = await pinecone.listIndexes();
+      const found = existing.indexes?.some((i) => i.name === PINECONE_INDEX);
+      if (!found) {
+        console.log(`Pinecone index "${PINECONE_INDEX}" doesn't exist yet — creating it (dimension ${dimension})...`);
+        await pinecone.createIndex({
+          name: PINECONE_INDEX,
+          dimension,
+          metric: "cosine",
+          spec: { serverless: { cloud: (process.env.PINECONE_CLOUD || "aws") as "aws" | "gcp" | "azure", region: process.env.PINECONE_REGION || "us-east-1" } },
+          waitUntilReady: true,
+        });
+      }
+    })();
+  }
+  try {
+    await indexReady;
+  } catch (err) {
+    indexReady = null;
+    throw err;
+  }
+}
+async function upsertToPinecone(workspaceId: string, records: { id: string; values: number[]; content: string; documentName: string }[]) {
+  if (!pinecone || records.length === 0) return;
+  await ensureIndex(records[0].values.length);
+  const ns = pinecone.index(PINECONE_INDEX).namespace(workspaceId);
+  await ns.upsert({ records: records.map((r) => ({ id: r.id, values: r.values, metadata: { content: r.content, documentName: r.documentName } })) });
+}
+
 function chunkText(text: string, chunkSize = 900) {
   const paragraphs = text.split(/\n\s*\n/).filter((p) => p.trim().length > 0);
   const chunks: { content: string; index: number; tokenCount: number }[] = [];
@@ -254,22 +313,33 @@ async function main() {
   });
 
   console.log("Created workspace, users, agent. Ingesting documents...");
+  if (!pinecone) {
+    console.warn("⚠️  PINECONE_API_KEY not set — seeded documents/FAQs will have text in MongoDB but no vectors, so chat retrieval won't find them until you configure Pinecone and run `npm run db:reembed`.");
+  }
 
   for (const doc of DOCS) {
     const document = await prisma.document.create({
       data: { workspaceId: workspace.id, name: doc.name, type: doc.name.endsWith(".docx") ? "DOCX" : doc.name.endsWith(".txt") ? "TXT" : "PDF", status: "PROCESSED", fileSize: doc.content.length * 3, storagePath: null },
     });
     const chunks = chunkText(doc.content);
-    await prisma.documentChunk.createMany({
-      data: chunks.map((c) => ({
-        documentId: document.id,
-        workspaceId: workspace.id,
-        content: c.content,
-        embedding: hashEmbedding(c.content),
-        chunkIndex: c.index,
-        tokenCount: c.tokenCount,
-      })),
-    });
+    const vectors = await embedBatch(chunks.map((c) => c.content));
+    const createdChunks = await Promise.all(
+      chunks.map((c) =>
+        prisma.documentChunk.create({
+          data: {
+            documentId: document.id,
+            workspaceId: workspace.id,
+            content: c.content,
+            chunkIndex: c.index,
+            tokenCount: c.tokenCount,
+          },
+        })
+      )
+    );
+    await upsertToPinecone(
+      workspace.id,
+      createdChunks.map((c, i) => ({ id: c.id, values: vectors[i], content: c.content, documentName: doc.name }))
+    );
     await prisma.document.update({ where: { id: document.id }, data: { chunkCount: chunks.length } });
   }
   // One document still "processing" so the UI demonstrates that state.
@@ -286,14 +356,12 @@ async function main() {
 
   console.log("Adding FAQs...");
   for (const faq of FAQS) {
-    await prisma.fAQ.create({
-      data: {
-        workspaceId: workspace.id,
-        question: faq.question,
-        answer: faq.answer,
-        embedding: hashEmbedding(`Q: ${faq.question}\nA: ${faq.answer}`),
-      },
+    const content = `Q: ${faq.question}\nA: ${faq.answer}`;
+    const created = await prisma.fAQ.create({
+      data: { workspaceId: workspace.id, question: faq.question, answer: faq.answer },
     });
+    const [vector] = await embedBatch([content]);
+    await upsertToPinecone(workspace.id, [{ id: created.id, values: vector, content, documentName: "FAQ" }]);
   }
 
   console.log("Creating customers, conversations, messages, tickets...");

@@ -9,8 +9,10 @@
 //   the reserved `_id` field. Relation scalar fields are annotated
 //   `@db.ObjectId` so Prisma stores/queries them as real ObjectIds rather
 //   than plain strings.
-// - Embeddings are stored as native `Float[]` arrays (idiomatic for Mongo)
-//   instead of JSON-encoded strings.
+// - Embeddings are NOT stored here — DocumentChunk and FAQ intentionally
+//   have no embedding field. Vectors live exclusively in Pinecone (see
+//   src/lib/rag/pinecone.ts), keyed by each row's own id and namespaced by
+//   workspaceId. RAG retrieval requires PINECONE_API_KEY to be configured.
 
 generator client {
   provider = "prisma-client-js"
@@ -199,7 +201,10 @@ model DocumentChunk {
   document    Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
   workspaceId String   @db.ObjectId
   content     String
-  embedding   Float[] // Native vector array. On Atlas, add an Atlas Vector Search index on this field for ANN search at scale.
+  // No embedding field here on purpose — vectors live exclusively in
+  // Pinecone (see src/lib/rag/pinecone.ts), keyed by this row's own id and
+  // namespaced by workspaceId. Requires PINECONE_API_KEY to be configured;
+  // there's no in-Mongo fallback search.
   chunkIndex  Int
   tokenCount  Int      @default(0)
   createdAt   DateTime @default(now())
@@ -238,7 +243,8 @@ model FAQ {
   question    String
   answer      String
   isActive    Boolean   @default(true)
-  embedding   Float[]   @default([])
+  // No embedding field here on purpose — see DocumentChunk above; vectors
+  // live exclusively in Pinecone, keyed by this row's own id.
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 

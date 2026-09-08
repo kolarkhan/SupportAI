@@ -145,7 +145,11 @@ export async function POST(req: NextRequest) {
             }
           }
         }
-      } catch {
+      } catch (err) {
+        // Swallowing this silently made a real provider failure (e.g. a
+        // retired model name, bad API key) indistinguishable from normal
+        // operation in the logs — log it so it's actually diagnosable.
+        console.error("AI provider generation failed:", err);
         fullText = "Something went wrong generating a response. Let me connect you with a specialist.";
         send({ type: "delta", text: fullText });
       }
