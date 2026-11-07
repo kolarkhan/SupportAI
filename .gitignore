@@ -11,3 +11,9 @@ uploads/
 .vercel
 tsconfig.tsbuildinfo
 next-env.d.ts
+
+# private freelancing material
+upwork-assets/
+.claude/
+.env.*
+!.env.example

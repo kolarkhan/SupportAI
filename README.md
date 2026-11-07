@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 # SupportAI
 
 A production-style AI customer support SaaS: businesses train an AI agent on their own knowledge base (documents, websites, FAQs), embed a chat widget on their site, and manage conversations, tickets, and analytics from a full dashboard.
@@ -166,6 +165,3 @@ Seeded by `npm run db:seed` — workspace **Acme Cloud**, password `password123`
 - `owner@acmecloud.com` — Owner
 - `admin@acmecloud.com` — Admin
 - `agent@acmecloud.com` — Support Agent
-=======
-# SupportAI
->>>>>>> 4cba2eba07d5b51107a4976cba656848187c9d43
